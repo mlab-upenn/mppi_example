@@ -3,7 +3,6 @@ params_f1tenth = {'mu': 1.0, 'C_Sf': 4.718, 'C_Sr': 5.4562, 'lf': 0.15875, 'lr':
                                'sv_max': 3.2, 'v_switch': 7.319, 'a_max': 9.51, 'v_min': -5.0, 'v_max': 20.0,
                                'width': 0.31, 'length': 0.58}  # F1/10 car
 
-
 params_real = {'mu': 1.0, 'C_Sf': 20.898, 'C_Sr': 20.898, 'lf': 0.88392, 'lr': 1.50876, 'h': 0.59436,
                                'm': 1225.887, 'I': 1538.853371, 's_min': -0.910, 's_max': 0.910, 'sv_min': -0.6,
                                'sv_max': 0.6, 'v_switch': 4.755, 'a_max': 2., 'v_min': -13.9, 'v_max': 99,

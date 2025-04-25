@@ -18,7 +18,7 @@ import utils.utils as utils
 from utils.jax_utils import numpify
 import utils.jax_utils as jax_utils
 from utils.Track import Track
-jax.config.update("jax_compilation_cache_dir", "/home/nvidia/jax_cache") 
+#jax.config.update("jax_compilation_cache_dir", "/home/nvidia/jax_cache") 
 
 
 ## This is a demosntration of how to use the MPPI planner with the Roboracer
@@ -44,8 +44,10 @@ class MPPI_Node(Node):
         state_c_0 = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.control = np.asarray([0.0, 0.0])
         reference_traj, waypoint_ind = self.infer_env.get_refernece_traj(state_c_0.copy(), self.config.ref_vel, self.config.n_steps)
+        
         self.mppi.update(jnp.asarray(state_c_0), jnp.asarray(reference_traj))
         self.get_logger().info('MPPI initialized')
+        self.hz = []
         
         
         qos = rclpy.qos.QoSProfile(history=rclpy.qos.QoSHistoryPolicy.KEEP_LAST,
@@ -64,13 +66,14 @@ class MPPI_Node(Node):
 
     def pose_callback(self, pose_msg):
         """
-        Callback function for subscribing to particle filter's inferred pose.
+        Callback function for subscribing to particle filter's  inferred pose.
         This funcion saves the current pose of the car and obtain the goal
         waypoint from the pure pursuit module.
 
         Args: 
             pose_msg (PoseStamped): incoming message from subscribed topic
         """
+        t1 = time.time()
         pose = pose_msg.pose.pose
         twist = pose_msg.twist.twist
 
@@ -96,7 +99,8 @@ class MPPI_Node(Node):
             beta,
         ])
         find_waypoint_vel = max(self.config.ref_vel, twist.linear.x)
-        reference_traj, waypoint_ind = self.infer_env.get_refernece_traj(state_c_0.copy(), find_waypoint_vel, self.config.n_steps)
+        
+        reference_traj, waypoint_ind = self.infer_env.get_refernece_traj(state_c_0, find_waypoint_vel, self.config.n_steps)
 
         ## MPPI call
         self.mppi.update(jnp.asarray(state_c_0), jnp.asarray(reference_traj))
@@ -129,6 +133,11 @@ class MPPI_Node(Node):
         drive_msg.drive.speed = self.control[1]
         # self.get_logger().info(f"Steering Angle: {drive_msg.drive.steering_angle}, Speed: {drive_msg.drive.speed}")
         self.drive_pub.publish(drive_msg)
+        self.hz.append(1/(time.time() - t1))
+        if len(self.hz) == 100:
+            self.hz = np.mean(self.hz)
+            print(f"MPPI Hz: {self.hz:.2f}")
+            self.hz = []
         
 
 def main(args=None):

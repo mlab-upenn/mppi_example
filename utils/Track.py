@@ -5,7 +5,7 @@ import numpy as np
 from functools import partial
 import jax.numpy as jnp
 import jax
-from numba import njit
+# from numba import njit
 import datetime
 import hashlib
 
@@ -766,7 +766,7 @@ if __name__ == "__main__":
     # print("Simple Cartesian to Frenet and Frenet to Cartesian tests passed!")
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def nearest_point(point, trajectory):
     """
     Return the nearest point along the given piecewise linear trajectory.

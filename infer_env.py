@@ -40,7 +40,7 @@ class InferEnv():
             @jax.jit
             def update_fn(x, u):
                 x1 = x.copy()
-                Ddt = 0.05
+                Ddt = 0.1
                 def step_fn(i, x0):
                     args = (self.config.friction,)
                     return RK4_fn(x0, u, Ddt, vehicle_dynamics_st, args)
@@ -52,7 +52,7 @@ class InferEnv():
             @jax.jit
             def update_fn(x, u,):
                 x_k = x.copy()[:5]
-                Ddt = 0.05
+                Ddt = 0.1
                 def step_fn(i, x0):
                     args = ()
                     return RK4_fn(x0, u, Ddt, vehicle_dynamics_ks, args)
@@ -144,10 +144,34 @@ class InferEnv():
 
         return ref_traj
     
+    @partial(jax.jit, static_argnums=(0,3))
+    def get_refernece_traj_jax(self, state, target_speed, n_steps=10):
+        _, dist, _, _, ind = nearest_point_jax(jnp.array([state[0], state[1]]), 
+                                           self.waypoints[:, (1, 2)], jnp.array(self.diff))
+        
+        speed = target_speed
+        speeds = jnp.ones(n_steps) * speed
+        
+        reference = get_reference_trajectory_jax(speeds, dist, ind, 
+                                            self.waypoints.copy(), int(n_steps),
+                                            self.waypoints_distances.copy(), DT=self.DT)
+        orientation = state[4]
+        reference = reference.at[:, 3].set(
+            jnp.where(reference[:, 3] - orientation > 5, 
+                  reference[:, 3] - 2 * jnp.pi, 
+                  reference[:, 3])
+        )
+        reference = reference.at[:, 3].set(
+            jnp.where(reference[:, 3] - orientation < -5, 
+                  reference[:, 3] + 2 * jnp.pi, 
+                  reference[:, 3])
+        )
+        
+        return reference, ind
     
     def get_refernece_traj(self, state, target_speed=None, n_steps=10, vind=5, speed_factor=1.0):
         _, dist, _, _, ind = nearest_point(np.array([state[0], state[1]]), 
-                                           self.waypoints[:, (1, 2)].copy())
+                                           self.waypoints[:, (1, 2)].copy(), self.diff)
         
         if target_speed is None:
             # speed = self.waypoints[ind, vind] * speed_factor
@@ -174,53 +198,65 @@ class InferEnv():
         self.reference = reference.T
         return reference.T, ind
 
-    
-    # def state_st2infer(self, st_state):
-    #     return jnp.array([st_state[2], 
-    #                     st_state[3] * jnp.cos(st_state[6]),
-    #                     st_state[5],
-    #                     st_state[3] * jnp.sin(st_state[6])])
-        
-    
-    # def state_st2nf(self, st_state):
-    #     return np.array([st_state[0], st_state[1], st_state[2],
-    #                     st_state[3] * np.cos(st_state[6]),
-    #                     st_state[4], st_state[5],
-    #                     st_state[3] * np.sin(st_state[6])])
-        
-    
-    # def state_nf2st(self, nf_state):
-    #     return np.array([nf_state[0], nf_state[1], nf_state[2],
-    #                     np.sqrt(nf_state[3] ** 2 + nf_state[6] ** 2),
-    #                     nf_state[4], nf_state[5],
-    #                     np.arctan2(nf_state[6], nf_state[3])])
-        
-    # def state_mb2st(self, mb_state):
-    #     return np.array([mb_state[0], mb_state[1], mb_state[2],
-    #                     np.sqrt(mb_state[3] ** 2 + mb_state[10] ** 2),
-    #                     mb_state[4], mb_state[5],
-    #                     np.arctan2(mb_state[10], mb_state[3])])
-        
-        
-    # def state_mb2nf(self, mb_state):
-    #     return np.array([mb_state[0], mb_state[1], mb_state[2],
-    #                     mb_state[3], mb_state[4], mb_state[5],
-    #                     mb_state[10]])
-        
-    
-    # def state_nf2mb(self, mb_state, nf_state):
-    #     mb_state[0:6] = nf_state[0:6]
-    #     mb_state[10] = nf_state[6]
-    #     return mb_state
-    
-    
-    # def state_nf2infer(self, mb_state):
-    #     return jnp.array([mb_state[2], mb_state[3], mb_state[5], mb_state[6]])
-        
+@jax.jit
+def get_reference_trajectory_jax(predicted_speeds, dist_from_segment_start, idx, 
+                             waypoints, n_steps, waypoints_distances, DT):
+    total_length = jnp.sum(waypoints_distances)
+    s_relative = jnp.concatenate([
+        jnp.array([dist_from_segment_start]),
+        predicted_speeds * DT
+    ]).cumsum()
+    s_relative = s_relative % total_length  
+    rolled_distances = jnp.roll(waypoints_distances, -idx)
+    wp_dist_cum = jnp.concatenate([jnp.array([0.0]), jnp.cumsum(rolled_distances)])
+    index_relative = jnp.searchsorted(wp_dist_cum, s_relative, side='right') - 1
+    index_relative = jnp.clip(index_relative, 0, len(rolled_distances) - 1)
+    index_absolute = (idx + index_relative) % (waypoints.shape[0] - 1)
+    next_index = (index_absolute + 1) % (waypoints.shape[0] - 1)
+    seg_start = wp_dist_cum[index_relative]
+    seg_len = rolled_distances[index_relative]
+    t = (s_relative - seg_start) / seg_len
+    p0 = waypoints[index_absolute][:, 1:3]
+    p1 = waypoints[next_index][:, 1:3]
+    interpolated_positions = p0 + (p1 - p0) * t[:, jnp.newaxis]
+    s0 = waypoints[index_absolute][:, 0]
+    s1 = waypoints[next_index][:, 0]
+    interpolated_s = (s0 + (s1 - s0) * t) % waypoints[-1, 0]  
+    yaw0 = waypoints[index_absolute][:, 3]
+    yaw1 = waypoints[next_index][:, 3]
+    interpolated_yaw = yaw0 + (yaw1 - yaw0) * t
+    interpolated_yaw = (interpolated_yaw + jnp.pi) % (2 * jnp.pi) - jnp.pi
+    v0 = waypoints[index_absolute][:, 5]
+    v1 = waypoints[next_index][:, 5]
+    interpolated_speed = v0 + (v1 - v0) * t
+    reference = jnp.stack([
+        interpolated_positions[:, 0],
+        interpolated_positions[:, 1],
+        interpolated_speed,
+        interpolated_yaw,
+        interpolated_s,
+        jnp.zeros_like(interpolated_speed),
+        jnp.zeros_like(interpolated_speed)
+    ], axis=1)
+    return reference
 
+@jax.jit
+def nearest_point_jax(point, trajectory, diffs):
+    # diffs = trajectory[1:] - trajectory[:-1]                    
+    l2s = jnp.sum(diffs**2, axis=1) + 1e-8                    
+    dots = jnp.sum((point - trajectory[:-1]) * diffs, axis=1) 
+    t = jnp.clip(dots / l2s, 0., 1.)   
+    projections = trajectory[:-1] + diffs * t[:, None]
+    dists = jnp.linalg.norm(point - projections, axis=1)      
+    min_dist_segment = jnp.argmin(dists)                
+    dist_from_segment_start = jnp.linalg.norm(diffs[min_dist_segment] * t[min_dist_segment])          
+    return projections[min_dist_segment],dist_from_segment_start, dists[min_dist_segment], t[min_dist_segment], min_dist_segment
     
+
+
+
 @njit(cache=True)
-def nearest_point(point, trajectory):
+def nearest_point(point, trajectory, diffs):
     """
     Return the nearest point along the given piecewise linear trajectory.
     Args:
@@ -233,7 +269,8 @@ def nearest_point(point, trajectory):
         t (float): nearest point's location as a segment between 0 and 1 on the vector formed by the closest two points on the trajectory. (p_i---*-------p_i+1)
         i (int): index of nearest point in the array of trajectory waypoints
     """
-    diffs = trajectory[1:, :] - trajectory[:-1, :]
+    # diffs = trajectory[1:, :] - trajectory[:-1, :]
+    # diffs = self.diff
     l2s = diffs[:, 0] ** 2 + diffs[:, 1] ** 2
     dots = np.empty((trajectory.shape[0] - 1,))
     for i in range(dots.shape[0]):
@@ -301,4 +338,5 @@ def get_reference_trajectory(predicted_speeds, dist_from_segment_start, idx,
         np.zeros(len(interpolated_speeds))
     ])
     return reference
-    
+
+

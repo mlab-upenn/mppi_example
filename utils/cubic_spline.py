@@ -12,9 +12,10 @@ from typing import Union, Optional
 from functools import partial
 import jax.numpy as jnp
 import jax
+from typing import Tuple as tuple
 
-from numba import njit
-@njit(fastmath=False, cache=True)
+#from numba import njit
+#@njit(fastmath=False, cache=True)
 def get_dists_to_point_on_trajectory(point: np.ndarray, trajectory: np.ndarray) -> tuple:
     """
     Return the nearest point along the given piecewise linear trajectory.

@@ -14,13 +14,13 @@ is_sim: false
 map_dir: ./waypoints/
 map_ind: 0
 n_iterations: 1
-n_samples: 512
+n_samples: 256
 n_steps: 10
 norm_params:
-- - 4.0
-  - -2.0
 - - 6.0
   - -3.0
+- - 8.0
+  - -4.0
 random_seed: 527787
 ref_vel: 4.0
 render: 1
